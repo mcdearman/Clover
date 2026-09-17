@@ -1,0 +1,59 @@
+-- Lazy sequences of smaller values: what the crate's shrinkers, which are
+-- iterators, yield. Only as much of one is built as a search looks at.
+--
+-- Copyright Andrew Gallant and the quickcheck contributors, and the Meadow
+-- port's authors. Dual-licensed under MIT or the Unlicense: see COPYRIGHT.
+
+use Std.Collections.Vector as V
+
+-- A value, and the rest when asked for; or nothing more.
+@pub data Shrinks a = Done | More a (() -> Shrinks a)
+
+@pub def noShrinks = Shrinks.Done
+
+@pub fun oneShrink x = Shrinks.More x (\() -> Shrinks.Done)
+
+-- The values of `xs`, in order.
+@pub fun shrinksOf xs =
+  let rec from k =
+    match V.get xs k with
+    | Just x -> Shrinks.More x (\() -> from (k + 1))
+    | None -> Shrinks.Done
+  in
+  from 0
+
+-- `f` of each value.
+@pub fun mapShrinks f s =
+  match s with
+  | Shrinks.Done -> Shrinks.Done
+  | Shrinks.More x rest -> Shrinks.More (f x) (\() -> mapShrinks f (rest ()))
+
+-- The values `keep` gives `Just` for, unwrapped.
+@pub fun filterMapShrinks keep s =
+  match s with
+  | Shrinks.Done -> Shrinks.Done
+  | Shrinks.More x rest ->
+      match keep x with
+      | Just y -> Shrinks.More y (\() -> filterMapShrinks keep (rest ()))
+      | None -> filterMapShrinks keep (rest ())
+
+-- `a`'s values, then `b ()`'s.
+@pub fun appendShrinks a b =
+  match a with
+  | Shrinks.Done -> b ()
+  | Shrinks.More x rest -> Shrinks.More x (\() -> appendShrinks (rest ()) b)
+
+-- The first value `test` accepts.
+@pub fun findShrink test s =
+  match s with
+  | Shrinks.Done -> None
+  | Shrinks.More x rest -> if test x then Just x else findShrink test (rest ())
+
+-- Every value, eagerly: for looking at a short sequence.
+@pub fun shrinksToVector s =
+  let rec go t acc =
+    match t with
+    | Shrinks.Done -> acc
+    | Shrinks.More x rest -> go (rest ()) (V.pushBack acc x)
+  in
+  go s V.empty

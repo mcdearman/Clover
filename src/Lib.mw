@@ -1,0 +1,23 @@
+-- quickcheck: testing properties on many random inputs, and shrinking a
+-- failing input to a small one. A port of Rust's `quickcheck` crate, version
+-- 1.0.3.
+--
+--   use quickcheck (forAll, vector, int, fromBool, quickcheck)
+--   use Std.Collections.Vector as V
+--
+--   @test fun reverseTwiceIsTheSame () =
+--     quickcheck (forAll (vector int) (\xs -> fromBool (V.reverse (V.reverse xs) == xs)))
+
+mod Shrinks
+mod Arbitrary
+mod Tester
+@cfg(test)
+mod Cases
+@cfg(test)
+mod Tests
+
+@pub use quickcheck.Shrinks
+@pub use quickcheck.Shrinks.Shrinks.*
+@pub use quickcheck.Arbitrary
+@pub use quickcheck.Tester
+@pub use quickcheck.Tester.Status.*

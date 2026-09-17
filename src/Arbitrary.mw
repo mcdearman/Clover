@@ -1,0 +1,322 @@
+-- Values to test with, and smaller values to try when one fails: the crate's
+-- `src/arbitrary.rs`.
+--
+-- Where the crate has a trait, this has a record, `Arbitrary a`, passed by
+-- hand. Generating performs `Std.Random`, so `withSeed` makes a run repeatable;
+-- with no handler the runtime supplies entropy, as the crate's `Gen` does.
+--
+-- Copyright Andrew Gallant and the quickcheck contributors, and the Meadow
+-- port's authors. Dual-licensed under MIT or the Unlicense: see COPYRIGHT.
+
+use Std.Collections.Vector as V
+use Std.Random (nextInt, intBetween, nextFloat)
+use Std.Num (minInt8, maxInt8, minInt16, maxInt16, minInt32, maxInt32, minInt, maxInt)
+use Std.Num (maxUInt8, maxUInt16, maxUInt32, maxUInt64)
+use quickcheck.Shrinks
+
+-- --- generating --------------------------------------------------------------------------
+
+-- How big generated collections may get.
+@pub record Gen = { size : Int }
+
+@pub fun gen size = Gen { size = size }
+
+-- One of `xs`, or `None` if there are none.
+@pub fun choose xs =
+  if V.isEmpty xs then None else V.get xs (intBetween (0, V.len xs))
+
+fun pick xs fallback =
+  match choose xs with
+  | Just x -> x
+  | None -> fallback
+
+fun below n = intBetween (0, n)
+
+fun coin () = bitAnd (nextInt ()) 1 == 1
+
+-- How to generate values of a type, and how to shrink one.
+--
+-- Generating may perform `Random` and nothing else.
+@pub record Arbitrary a = { arbitrary : Gen -> a ! Random, shrink : a -> Shrinks a }
+
+-- An `Arbitrary` from its two halves.
+@pub fun arbitraryOf generate shrink = Arbitrary { arbitrary = generate, shrink = shrink }
+
+-- Values of `a` turned into `b` by `to`, shrunk by turning them back with
+-- `from`.
+@pub fun mapArbitrary (to : x -> y) (from : y -> x) (a : Arbitrary x) =
+  Arbitrary { arbitrary = \g -> to (a.arbitrary g), shrink = \v -> mapShrinks to (a.shrink (from v)) }
+
+-- `a`, never shrunk.
+@pub fun withoutShrinking (a : Arbitrary x) = Arbitrary { arbitrary = a.arbitrary, shrink = \_ -> noShrinks }
+
+@pub def unit = Arbitrary { arbitrary = \_ -> (), shrink = \_ -> noShrinks }
+
+@pub def bool =
+  Arbitrary {
+    arbitrary = \_ -> coin (),
+    shrink = \b -> if b then oneShrink False else noShrinks
+  }
+
+@pub fun maybe (a : Arbitrary x) =
+  Arbitrary {
+    arbitrary = \g -> if coin () then None else Just (a.arbitrary g),
+    shrink = \m ->
+      match m with
+      | None -> noShrinks
+      | Just x -> Shrinks.More None (\() -> mapShrinks Just (a.shrink x))
+  }
+
+@pub fun result (a : Arbitrary x) (b : Arbitrary y) =
+  Arbitrary {
+    arbitrary = \g -> if coin () then Ok (a.arbitrary g) else Err (b.arbitrary g),
+    shrink = \r ->
+      match r with
+      | Ok x -> mapShrinks Ok (a.shrink x)
+      | Err e -> mapShrinks Err (b.shrink e)
+  }
+
+@pub fun tuple2 (a : Arbitrary x) (b : Arbitrary y) =
+  Arbitrary {
+    arbitrary = \g -> (a.arbitrary g, b.arbitrary g),
+    shrink = \t ->
+      match t with
+      | (x, y) ->
+          appendShrinks (mapShrinks (\x2 -> (x2, y)) (a.shrink x)) (\() -> mapShrinks (\y2 -> (x, y2)) (b.shrink y))
+  }
+
+@pub fun tuple3 (a : Arbitrary x) (b : Arbitrary y) (c : Arbitrary z) =
+  Arbitrary {
+    arbitrary = \g -> (a.arbitrary g, b.arbitrary g, c.arbitrary g),
+    shrink = \t ->
+      match t with
+      | (x, y, w) ->
+          let first = mapShrinks (\x2 -> (x2, y, w)) (a.shrink x) in
+          let second = \() -> mapShrinks (\y2 -> (x, y2, w)) (b.shrink y) in
+          let third = \() -> mapShrinks (\w2 -> (x, y, w2)) (c.shrink w) in
+          appendShrinks first (\() -> appendShrinks (second ()) third)
+  }
+
+@pub fun tuple4 (a : Arbitrary x) (b : Arbitrary y) (c : Arbitrary z) (d : Arbitrary q) =
+  Arbitrary {
+    arbitrary = \g -> (a.arbitrary g, b.arbitrary g, c.arbitrary g, d.arbitrary g),
+    shrink = \t ->
+      match t with
+      | (x, y, w, v) ->
+          let first = mapShrinks (\x2 -> (x2, y, w, v)) (a.shrink x) in
+          let second = \() -> mapShrinks (\y2 -> (x, y2, w, v)) (b.shrink y) in
+          let third = \() -> mapShrinks (\w2 -> (x, y, w2, v)) (c.shrink w) in
+          let fourth = \() -> mapShrinks (\v2 -> (x, y, w, v2)) (d.shrink v) in
+          appendShrinks first (\() -> appendShrinks (second ()) (\() -> appendShrinks (third ()) fourth))
+  }
+
+-- --- collections -------------------------------------------------------------------------
+
+-- `seed` with `count` elements taken out, ending before `upTo`.
+fun without seed upTo count = V.append (V.take seed (upTo - count)) (V.drop seed upTo)
+
+-- The crate's `VecShrinker`: the empty vector; then runs of half the length
+-- taken out, then a quarter, and so on; then each element shrunk in turn.
+fun vectorShrinks shrinkElem seed =
+  let n = V.len seed in
+  let rec elements offset es =
+    match es with
+    | Shrinks.More e rest ->
+        let replaced = V.append (V.pushBack (V.take seed (offset - 1)) e) (V.drop seed offset) in
+        Shrinks.More replaced (\() -> elements offset (rest ()))
+    | Shrinks.Done ->
+        match V.get seed offset with
+        | Just e -> elements (offset + 1) (shrinkElem e)
+        | None -> Shrinks.Done
+  in
+  let rec removals size offset =
+    if size == 0
+    then
+      match V.get seed 0 with
+      | Just first -> elements 1 (shrinkElem first)
+      | None -> Shrinks.Done
+    else
+      let smaller = without seed offset size in
+      let next = offset + size in
+      if next > n
+      then Shrinks.More smaller (\() -> removals (size / 2) (size / 2))
+      else Shrinks.More smaller (\() -> removals size next)
+  in
+  if n == 0 then Shrinks.Done else Shrinks.More V.empty (\() -> removals (n / 2) (n / 2))
+
+fun collectionSize (g : Gen) = below g.size
+
+@pub fun vector (a : Arbitrary x) =
+  Arbitrary {
+    arbitrary = \g -> V.map (\_ -> a.arbitrary g) (V.range 0 (collectionSize g)),
+    shrink = vectorShrinks a.shrink
+  }
+
+@pub fun list (a : Arbitrary x) = mapArbitrary V.toList V.fromList (vector a)
+
+@pub fun array (a : Arbitrary x) = mapArbitrary V.toArray V.fromArray (vector a)
+
+-- --- numbers -----------------------------------------------------------------------------
+
+-- The crate's `UnsignedShrinker`, for any integer type holding `x >= 0`: zero,
+-- then `x` less half of it, less a quarter, and so on.
+@pub fun unsignedShrinks x =
+  if x == 0
+  then noShrinks
+  else
+    let rec go i = if x - i < x then Shrinks.More (x - i) (\() -> go (i / 2)) else Shrinks.Done in
+    Shrinks.More 0 (\() -> go (x / 2))
+
+-- The crate's `SignedShrinker`, for a signed integer type whose least value is
+-- `least`: zero, `x`'s magnitude if `x` is negative, then `x` less half of it,
+-- a quarter, and so on. For `least` itself the crate's sequence never ends.
+@pub fun signedShrinks least x =
+  if x == 0
+  then noShrinks
+  else
+    let magnitude = \v -> if v < 0 then 0 - v else v in
+    let rec go i =
+      if x == least or magnitude (x - i) < magnitude x
+      then Shrinks.More (x - i) (\() -> go (i / 2))
+      else Shrinks.Done
+    in
+    let half = x / 2 in
+    let rest = \() -> go half in
+    if half < 0 and x != least
+    then Shrinks.More 0 (\() -> Shrinks.More (magnitude x) rest)
+    else Shrinks.More 0 rest
+
+-- One in ten from `problems`, otherwise any value of the type.
+fun integer problems convert (shrinker : x -> Shrinks x) =
+  Arbitrary {
+    arbitrary = \_ -> if below 10 == 0 then pick problems (convert 0) else convert (nextInt ()),
+    shrink = shrinker
+  }
+
+@pub def int = integer [minInt, 0, maxInt] toInt (signedShrinks minInt)
+
+@pub def int8 = integer [minInt8, toInt8 0, maxInt8] toInt8 (signedShrinks minInt8)
+
+@pub def int16 = integer [minInt16, toInt16 0, maxInt16] toInt16 (signedShrinks minInt16)
+
+@pub def int32 = integer [minInt32, toInt32 0, maxInt32] toInt32 (signedShrinks minInt32)
+
+@pub def uint8 = integer [toUInt8 0, toUInt8 1, maxUInt8] toUInt8 unsignedShrinks
+
+@pub def uint16 = integer [toUInt16 0, toUInt16 1, maxUInt16] toUInt16 unsignedShrinks
+
+@pub def uint32 = integer [toUInt32 0, toUInt32 1, maxUInt32] toUInt32 unsignedShrinks
+
+@pub def uint64 = integer [toUInt64 0, toUInt64 1, maxUInt64] toUInt64 unsignedShrinks
+
+-- Rust's `f as i64`: towards zero, saturating, and 0 for NaN.
+@pub fun truncateToInt (f : Float) =
+  if not (f <=. f)
+  then 0
+  else if f >=. 9223372036854775807.0
+  then maxInt
+  else if f <=. (0.0 -. 9223372036854775808.0)
+  then minInt
+  else if f >=. 0.0
+  then floor f
+  else 0 - floor (0.0 -. f)
+
+-- Rust's `f as i32`, for a `Float32`.
+@pub fun truncateToInt32 (f : Float32) =
+  let d = toFloat64 f in
+  if not (d <=. d)
+  then toInt32 0
+  else if d >=. 2147483648.0
+  then maxInt32
+  else if d <=. (0.0 -. 2147483648.0)
+  then minInt32
+  else if d >=. 0.0
+  then toInt32 (floor d)
+  else toInt32 (0 - floor (0.0 -. d))
+
+-- `m * 2^e`, by doubling.
+fun scaled m e = if e <= 0 then m else scaled (m *. 2.0) (e - 1)
+
+def nan = 0.0 /. 0.0
+
+def infinity = 1.0 /. 0.0
+
+-- `m * 2^-e`, by halving.
+fun halved m e = if e <= 0 then m else halved (m *. 0.5) (e - 1)
+
+-- The largest finite `Float`: `(2 - 2^-52) * 2^1023`.
+def maxFloat = scaled (2.0 -. halved 1.0 52) 1023
+
+-- The largest finite `Float32`, as a `Float`: `(2 - 2^-23) * 2^127`.
+def maxFloat32 = scaled (2.0 -. halved 1.0 23) 127
+
+-- One in ten a problem value; otherwise a sign, a mantissa in [1, 2) and a
+-- power of two below `maxExp`. The crate's power is fractional; Meadow has no
+-- `exp2`, so here it is whole.
+fun genFloat maxExp maxValue =
+  if below 10 == 0
+  then pick [nan, 0.0 -. infinity, 0.0 -. maxValue, 0.0 -. 0.0, 0.0, maxValue, infinity] 0.0
+  else
+    let sign = if coin () then 1.0 else 0.0 -. 1.0 in
+    sign *. scaled (1.0 +. nextFloat ()) (below maxExp)
+
+-- Shrunk as the crate does: as an integer, towards zero.
+@pub def float =
+  Arbitrary {
+    arbitrary = \_ -> genFloat 1024 maxFloat,
+    shrink = \f -> mapShrinks toFloat (signedShrinks minInt (truncateToInt f))
+  }
+
+@pub def float32 =
+  Arbitrary {
+    arbitrary = \_ -> toFloat32 (genFloat 128 maxFloat32),
+    shrink = \f -> mapShrinks (\n -> toFloat32 (toFloat n)) (signedShrinks minInt32 (truncateToInt32 f))
+  }
+
+-- --- text --------------------------------------------------------------------------------
+
+fun validScalar cp = cp >= 0 and cp <= 0x10FFFF and (cp < 0xD800 or cp > 0xDFFF)
+
+def programming = stringToChars " \u{20}\u{20}\t\n~`!@#\$%^&*()_-=+[]{}:;'\"\\|,<>./?0123456789"
+
+def tricky =
+  V.toArray
+    (V.map
+      charFromCode
+      [ 0x0149, 0xfff0, 0xfff1, 0xfff2, 0xfff3, 0xfff4, 0xfff5, 0xfff6, 0xfff7, 0xfff8, 0xfff9,
+        0xfffA, 0xfffB, 0xfffC, 0xfffD, 0xfffE, 0xfffF, 0x0600, 0x0601, 0x0602, 0x0603, 0x0604,
+        0x0605, 0x061C, 0x06DD, 0x070F, 0x180E, 0x110BD, 0x1D173, 0xe0001, 0xe0020, 0xe000,
+        0xe001, 0xef8ff, 0xf0000, 0xffffd, 0xffffe, 0xfffff, 0x100000, 0x10FFFD, 0x10FFFE,
+        0x10FFFF, 0x3000, 0x1680 ])
+
+fun genChar () =
+  let mode = below 100 in
+  if mode < 50
+  then charFromCode (below 0xB0)
+  else if mode < 60
+  then
+    let rec bmp () = let cp = below 0x10000 in if validScalar cp then charFromCode cp else bmp () in
+    bmp ()
+  else if mode < 85
+  then pick (V.fromArray programming) ' '
+  else if mode < 90
+  then pick (V.fromArray tricky) ' '
+  else if mode < 95
+  then charFromCode (intBetween (0x2000, 0x2070))
+  else
+    let cp = below (0x110000 - 0x800) in
+    charFromCode (if cp >= 0xD800 then cp + 0x800 else cp)
+
+@pub def char =
+  Arbitrary {
+    arbitrary = \_ -> genChar (),
+    shrink = \c ->
+      filterMapShrinks (\cp -> if validScalar cp then Just (charFromCode cp) else None) (unsignedShrinks (charCode c))
+  }
+
+@pub def string =
+  Arbitrary {
+    arbitrary = \g -> charsToString (V.toArray (V.map (\_ -> genChar ()) (V.range 0 (collectionSize g)))),
+    shrink = \s ->
+      mapShrinks (\cs -> charsToString (V.toArray cs)) (vectorShrinks char.shrink (V.fromArray (stringToChars s)))
+  }

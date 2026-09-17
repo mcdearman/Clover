@@ -1,0 +1,165 @@
+-- Running properties: the crate's `src/tester.rs`.
+--
+-- A property is a function from a generator to a result. `forAll` builds one
+-- from an `Arbitrary` and a test, shrinking any input that fails to a smaller
+-- one that still does. Unlike the crate, a run-time error in the test is not
+-- caught: return `error` for failures you want reported with a message.
+--
+-- Copyright Andrew Gallant and the quickcheck contributors, and the Meadow
+-- port's authors. Dual-licensed under MIT or the Unlicense: see COPYRIGHT.
+
+use Std.Collections.Vector as V
+use Std.String as S
+use Std.Test (fail)
+use quickcheck.Shrinks
+use quickcheck.Arbitrary (Gen, Arbitrary, gen, tuple2, tuple3)
+
+@pub data Status = Pass | Fail | Discard
+
+-- What one test came to: its status, the arguments it was given, and an
+-- error message, if it failed with one.
+@pub record TestResult = { status : Status, arguments : [String], err : Maybe String }
+
+@pub fun fromBool b =
+  TestResult { status = if b then Status.Pass else Status.Fail, arguments = [], err = None }
+
+@pub def passed = fromBool True
+
+@pub def failed = fromBool False
+
+-- A failure, with a message.
+@pub fun error message = { fromBool False | err = Just message }
+
+-- Neither a pass nor a failure: the input did not suit the property.
+@pub def discard = TestResult { status = Status.Discard, arguments = [], err = None }
+
+-- `Ok` as the result it holds; `Err e` as an error showing `e`.
+@pub fun fromResult r =
+  match r with
+  | Ok (t : TestResult) -> t
+  | Err e -> error (display e)
+
+@pub fun isFailure (r : TestResult) =
+  match r.status with
+  | Status.Fail -> True
+  | _ -> False
+
+@pub fun isError (r : TestResult) = isFailure r and r.err != None
+
+-- The crate's report of a failed test.
+@pub fun failedMessage (r : TestResult) =
+  let arguments = S.join ", " r.arguments in
+  match r.err with
+  | None -> "[quickcheck] TEST FAILED. Arguments: (${arguments})"
+  | Just message -> "[quickcheck] TEST FAILED (runtime error). Arguments: (${arguments})\nError: ${message}"
+
+-- --- properties --------------------------------------------------------------------------
+
+-- A test to run many times: given a generator, one result.
+@pub record Property = { run : Gen -> TestResult ! Random }
+
+fun withArguments shown (r : TestResult) = { r | arguments = shown }
+
+-- The first smaller input that still fails, shrunk as far as it goes.
+fun shrinkFailure (a : Arbitrary x) test show value =
+  let failing = \candidate -> isFailure (test candidate) in
+  match findShrink failing (a.shrink value) with
+  | Just smaller ->
+      (match shrinkFailure a test show smaller with
+       | Just further -> Just further
+       | None -> Just (withArguments (show smaller) (test smaller)))
+  | None -> None
+
+-- The property that `test` holds for values of `a`, each shown by `show`
+-- as the crate lists arguments.
+@pub fun forAllShown (a : Arbitrary x) show test =
+  Property {
+    run = \g ->
+      let value = a.arbitrary g in
+      let r = withArguments (show value) (test value) in
+      match r.status with
+      | Status.Fail ->
+          (match shrinkFailure a test show value with
+           | Just smaller -> smaller
+           | None -> r)
+      | _ -> r
+  }
+
+-- The property that `test` holds for values of `a`.
+@pub fun forAll a test = forAllShown a (\v -> [display v]) test
+
+-- `forAll`, for a test of two arguments, listed separately when it fails.
+@pub fun forAll2 a b test =
+  forAllShown
+    (tuple2 a b)
+    (\t -> match t with | (x, y) -> [display x, display y])
+    (\t -> match t with | (x, y) -> test x y)
+
+-- `forAll`, for a test of three arguments.
+@pub fun forAll3 a b c test =
+  forAllShown
+    (tuple3 a b c)
+    (\t -> match t with | (x, y, z) -> [display x, display y, display z])
+    (\t -> match t with | (x, y, z) -> test x y z)
+
+-- --- running -----------------------------------------------------------------------------
+
+-- How many tests to run, and on what.
+@pub record QuickCheck = { tests : Int, maxTests : Int, minTestsPassed : Int, gen : Gen }
+
+fun envInt name fallback =
+  match getEnv name with
+  | Just text ->
+      (match S.toInt text with
+       | Just n -> toInt n
+       | None -> fallback)
+  | None -> fallback
+
+-- The crate's defaults, which `QUICKCHECK_TESTS`, `QUICKCHECK_MAX_TESTS`,
+-- `QUICKCHECK_GENERATOR_SIZE` and `QUICKCHECK_MIN_TESTS_PASSED` change: 100
+-- tests, at most 10,000 tries, generator size 100.
+@pub fun quickCheck () =
+  let tests = envInt "QUICKCHECK_TESTS" 100 in
+  let maxTests = envInt "QUICKCHECK_MAX_TESTS" 10000 in
+  QuickCheck {
+    tests = tests,
+    maxTests = if maxTests > tests then maxTests else tests,
+    minTestsPassed = envInt "QUICKCHECK_MIN_TESTS_PASSED" 0,
+    gen = gen (envInt "QUICKCHECK_GENERATOR_SIZE" 100)
+  }
+
+@pub fun setTests n (q : QuickCheck) = { q | tests = n }
+
+@pub fun setMaxTests n (q : QuickCheck) = { q | maxTests = n }
+
+@pub fun setMinTestsPassed n (q : QuickCheck) = { q | minTestsPassed = n }
+
+@pub fun setGen g (q : QuickCheck) = { q | gen = g }
+
+-- Up to `tests` passing tests, trying at most `maxTests` times: how many
+-- passed, or the first failure, shrunk.
+@pub fun quicktest (q : QuickCheck) (p : Property) =
+  let rec go tried passedSoFar =
+    if tried >= q.maxTests or passedSoFar >= q.tests
+    then Ok passedSoFar
+    else
+      let (r : TestResult) = p.run q.gen in
+      match r.status with
+      | Status.Pass -> go (tried + 1) (passedSoFar + 1)
+      | Status.Discard -> go (tried + 1) passedSoFar
+      | Status.Fail -> Err r
+  in
+  go 0 0
+
+-- `quicktest`, failing the current test with the crate's message if the
+-- property fails or too few tests could be run.
+@pub fun quickcheckWith (q : QuickCheck) p =
+  match quicktest q p with
+  | Err r -> fail (failedMessage r)
+  | Ok n ->
+      if n >= q.minTestsPassed
+      then ()
+      else fail "(Unable to generate enough tests, ${n} not discarded.)"
+
+-- `quickcheckWith` the defaults.
+@pub fun quickcheck p = quickcheckWith (quickCheck ()) p

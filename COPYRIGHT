@@ -1,0 +1,8 @@
+quickcheck (the Meadow package) is a port of the Rust crate quickcheck
+(https://github.com/BurntSushi/quickcheck), version 1.0.3, by Andrew Gallant
+and contributors, to Meadow. Its test cases are generated from that crate, and
+its code is translated from the crate's source.
+
+The crate is dual-licensed under the Unlicense and the MIT license, and so is
+this port: you may use it under the terms of either. See UNLICENSE and
+LICENSE-MIT.
