@@ -12,7 +12,7 @@ crate's words.
 ## Install
 
 ```sh
-meadow add mcdearman/meadow-quickcheck
+meadow add mcdearman/MeadowQuickcheck
 ```
 
 ## Use
@@ -21,7 +21,7 @@ meadow add mcdearman/meadow-quickcheck
 use Std.Random (withSeed)
 use Std.Collections.Vector as V
 use Std.Sort (sortBy)
-use quickcheck (forAll, forAll2, vector, int, fromBool, quickCheck, quicktest, quickcheck, failedMessage)
+use Quickcheck (forAll, forAll2, vector, int, fromBool, quickCheck, quicktest, quickcheck, failedMessage)
 
 -- Wrong: a sorted vector's first element is not always its largest.
 fun sortedFirstIsLargest xs =

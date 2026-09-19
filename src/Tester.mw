@@ -11,8 +11,8 @@
 use Std.Collections.Vector as V
 use Std.String as S
 use Std.Test (fail)
-use quickcheck.Shrinks
-use quickcheck.Arbitrary (Gen, Arbitrary, gen, tuple2, tuple3)
+use Quickcheck.Shrinks
+use Quickcheck.Arbitrary (Gen, Arbitrary, gen, tuple2, tuple3)
 
 @pub data Status = Pass | Fail | Discard
 
