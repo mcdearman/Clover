@@ -1,4 +1,4 @@
-# quickcheck
+# clover
 
 Property-based testing for [Meadow](https://github.com/mcdearman/meadow). You
 state a property, and it is checked on many random inputs. If an input breaks
@@ -12,7 +12,7 @@ crate's words.
 ## Install
 
 ```sh
-meadow add mcdearman/MeadowQuickcheck
+meadow add mcdearman/Clover
 ```
 
 ## Use
@@ -21,7 +21,7 @@ meadow add mcdearman/MeadowQuickcheck
 use Std.Random (withSeed)
 use Std.Collections.Vector as V
 use Std.Sort (sortBy)
-use Quickcheck (forAll, forAll2, vector, int, fromBool, quickCheck, quicktest, quickcheck, failedMessage)
+use Clover (forAll, forAll2, vector, int, fromBool, quickCheck, quicktest, quickcheck, failedMessage)
 
 -- Wrong: a sorted vector's first element is not always its largest.
 fun sortedFirstIsLargest xs =

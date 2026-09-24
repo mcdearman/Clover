@@ -2,7 +2,7 @@
 -- failing input to a small one. A port of Rust's `quickcheck` crate, version
 -- 1.0.3.
 --
---   use Quickcheck (forAll, vector, int, fromBool, quickcheck)
+--   use Clover (forAll, vector, int, fromBool, quickcheck)
 --   use Std.Collections.Vector as V
 --
 --   @test fun reverseTwiceIsTheSame () =
@@ -16,8 +16,8 @@ mod Cases
 @cfg(test)
 mod Tests
 
-@pub use Quickcheck.Shrinks
-@pub use Quickcheck.Shrinks.Shrinks.*
-@pub use Quickcheck.Arbitrary
-@pub use Quickcheck.Tester
-@pub use Quickcheck.Tester.Status.*
+@pub use Clover.Shrinks
+@pub use Clover.Shrinks.Shrinks.*
+@pub use Clover.Arbitrary
+@pub use Clover.Tester
+@pub use Clover.Tester.Status.*

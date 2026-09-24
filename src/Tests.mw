@@ -15,13 +15,13 @@ use Std.Random (withSeed)
 @cfg(test)
 use Std.Num (minInt32)
 @cfg(test)
-use Quickcheck.Cases (cases)
+use Clover.Cases (cases)
 @cfg(test)
-use Quickcheck.Shrinks
+use Clover.Shrinks
 @cfg(test)
-use Quickcheck.Arbitrary
+use Clover.Arbitrary
 @cfg(test)
-use Quickcheck.Tester
+use Clover.Tester
 
 @cfg(test)
 fun num i n =

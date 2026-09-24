@@ -12,7 +12,7 @@ use Std.Collections.Vector as V
 use Std.Random (nextInt, intBetween, nextFloat)
 use Std.Num (minInt8, maxInt8, minInt16, maxInt16, minInt32, maxInt32, minInt, maxInt)
 use Std.Num (maxUInt8, maxUInt16, maxUInt32, maxUInt64)
-use Quickcheck.Shrinks
+use Clover.Shrinks
 
 -- --- generating --------------------------------------------------------------------------
 
